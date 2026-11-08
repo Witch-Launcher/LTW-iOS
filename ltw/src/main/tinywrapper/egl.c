@@ -212,6 +212,12 @@ static void find_esversion(context_t* context) {
         blend->available = false;
     }
 #undef SET_FUNC
+    if(env_istrue("LTW_DEBUG")) {
+        GLfloat aniso = -1.0f;
+        es3_functions.glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &aniso);
+        printf("LTW: host anisotropy ext=%d max=%f\n",
+               strstr(extensions, "GL_EXT_texture_filter_anisotropic") != NULL, aniso);
+    }
     build_extension_string(context);
 
     return;

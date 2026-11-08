@@ -278,12 +278,33 @@ void glRenderbufferStorage(	GLenum target,
 
 static bool never_flush_buffers;
 static bool coherent_dynamic_storage;
+static bool debug;
+
+static GLint debug_query_bound_buffer(GLenum target) {
+    GLint binding = -1;
+    switch(target) {
+        case GL_ARRAY_BUFFER: es3_functions.glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &binding); break;
+        case GL_ELEMENT_ARRAY_BUFFER: es3_functions.glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &binding); break;
+        case GL_UNIFORM_BUFFER: es3_functions.glGetIntegerv(GL_UNIFORM_BUFFER_BINDING, &binding); break;
+        case GL_PIXEL_PACK_BUFFER: es3_functions.glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &binding); break;
+        case GL_PIXEL_UNPACK_BUFFER: es3_functions.glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &binding); break;
+        case GL_COPY_READ_BUFFER: es3_functions.glGetIntegerv(GL_COPY_READ_BUFFER_BINDING, &binding); break;
+        case GL_COPY_WRITE_BUFFER: es3_functions.glGetIntegerv(GL_COPY_WRITE_BUFFER_BINDING, &binding); break;
+        case GL_TRANSFORM_FEEDBACK_BUFFER: es3_functions.glGetIntegerv(GL_TRANSFORM_FEEDBACK_BUFFER_BINDING, &binding); break;
+        default: binding = -2; break;
+    }
+    return binding;
+}
 
 void glBufferStorage(GLenum target,
                      GLsizeiptr size,
                      const void * data,
                      GLbitfield flags) {
-    if(!current_context || !current_context->buffer_storage) return;
+    if(!current_context || !current_context->buffer_storage) {
+        if(debug) printf("LTW: glBufferStorage target=0x%x size=%ld data=%p flags=0x%x SKIPPED (buffer_storage unsupported)\n",
+                         target, (long)size, data, flags);
+        return;
+    }
     // Enable coherence to make sure the buffers are synced without flushing.
     if(never_flush_buffers && ((flags & GL_MAP_PERSISTENT_BIT) != 0)) {
         flags |= GL_MAP_COHERENT_BIT;
@@ -292,7 +313,16 @@ void glBufferStorage(GLenum target,
     if(coherent_dynamic_storage && (flags & GL_DYNAMIC_STORAGE_BIT) != 0) {
         flags |= (GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
     }
+    GLenum preerr = 0;
+    if(debug) preerr = es3_functions.glGetError();
     es3_functions.glBufferStorageEXT(target, size, data, flags);
+    if(debug) {
+        int bidx = get_buffer_index(target);
+        printf("LTW: glBufferStorage target=0x%x size=%ld flags=0x%x preerr=0x%x err=0x%x hostbound=%d ltwbound=%d\n",
+               target, (long)size, flags, preerr, es3_functions.glGetError(),
+               debug_query_bound_buffer(target),
+               bidx < 0 ? -1 : (int)current_context->bound_buffers[bidx]);
+    }
 }
 
 void *glMapBufferRange( 	GLenum target,
@@ -300,7 +330,18 @@ void *glMapBufferRange( 	GLenum target,
                            GLsizeiptr length,
                            GLbitfield access) {
     if(never_flush_buffers) access &= ~GL_MAP_FLUSH_EXPLICIT_BIT;
-    return es3_functions.glMapBufferRange(target, offset, length, access);
+    GLenum preerr = 0;
+    if(debug) preerr = es3_functions.glGetError();
+    void* ret = es3_functions.glMapBufferRange(target, offset, length, access);
+    if(debug) {
+        int bidx = get_buffer_index(target);
+        printf("LTW: glMapBufferRange target=0x%x offset=%ld length=%ld access=0x%x -> %p preerr=0x%x err=0x%x hostbound=%d ltwbound=%d\n",
+               target, (long)offset, (long)length, access, ret, preerr,
+               ret ? 0 : es3_functions.glGetError(),
+               debug_query_bound_buffer(target),
+               bidx < 0 ? -1 : (int)current_context->bound_buffers[bidx]);
+    }
+    return ret;
 }
 
 void glFlushMappedBufferRange( 	GLenum target,
@@ -469,6 +510,12 @@ void glGetIntegerv(GLenum pname, GLint* data) {
     }
 }
 
+void glGetFloatv(GLenum pname, GLfloat* data) {
+    if(!current_context) return;
+    es3_functions.glGetFloatv(pname, data);
+    if(debug) printf("LTW: glGetFloatv pname=0x%x -> %f\n", pname, *data);
+}
+
 void glDepthRange(GLdouble nearVal,
                   GLdouble farVal) {
     if(!current_context) return;
@@ -539,7 +586,7 @@ void glClearTexImageARB(GLuint texture, GLint level, GLenum format, GLenum type,
 
 // TODO: implement this
 static bool user_warned = false;
-void glClearTexSubImage(uint texture, int level,
+void glClearTexSubImage(GLuint texture, int level,
                       int xoffset, int yoffset, int zoffset,
                       GLsizei width, GLsizei height, GLsizei depth,
                       GLenum format, GLenum type,
@@ -555,7 +602,7 @@ void glClearTexSubImage(uint texture, int level,
     }
 }
 
-void glClearTexSubImageARB(uint texture, int level,
+void glClearTexSubImageARB(GLuint texture, int level,
                         int xoffset, int yoffset, int zoffset,
                         GLsizei width, GLsizei height, GLsizei depth,
                         GLenum format, GLenum type,
